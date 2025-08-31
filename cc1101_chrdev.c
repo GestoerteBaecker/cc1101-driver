@@ -365,30 +365,37 @@ done:
 /*
 *   Add a character device for a cc1101
 */
-int cc1101_chrdev_add_device(cc1101_t * cc1101) {
+int cc1101_chrdev_add_device(cc1101_t *cc1101)
+{
     int ret;
     int device_index;
- 
+
     mutex_lock(&device_list_lock);
 
-    // Search for a free minor number
-    for(device_index = 0; device_index < N_SPI_MINOR_NUMBERS; device_index++){
-        if(device_list[device_index] == NULL){
-            // Allocate the minor number
+    for (device_index = 0; device_index < N_SPI_MINOR_NUMBERS; device_index++) {
+        if (device_list[device_index] == NULL) {
+            const char *spi_id;
+
             cc1101->devt = MKDEV(SPI_MAJOR_NUMBER, device_index);
 
-            // Create a /dev/cc1101.x.x character device
-            if(IS_ERR(device_create(dev_class, &cc1101->spi->dev, cc1101->devt, cc1101, "cc1101.%d.%d", cc1101->spi->master->bus_num, cc1101->spi->chip_select))) {
+            spi_id = dev_name(&cc1101->spi->dev);
+
+            if (IS_ERR(device_create(dev_class,
+                                     &cc1101->spi->dev,
+                                     cc1101->devt,
+                                     cc1101,
+                                     "cc1101.%s",
+                                     spi_id))) {
                 ret = -ENODEV;
                 goto done;
             }
 
-            // Insert the device in the device list
             device_list[device_index] = cc1101;
             ret = 0;
             goto done;
         }
     }
+
     ret = -ENODEV;
 
 done:
@@ -432,7 +439,7 @@ int cc1101_chrdev_setup(struct spi_driver* cc1101_driver)
         goto err_register;
     }
 
-	dev_class = class_create(THIS_MODULE, "cc1101");
+	dev_class = class_create("cc1101");
 	if (IS_ERR(dev_class)) {
 		ret = PTR_ERR(dev_class);
         goto err_class_create;

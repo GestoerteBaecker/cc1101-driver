@@ -117,7 +117,7 @@ static int cc1101_spi_probe(struct spi_device *spi)
 /*
 *   Function called on module removal for each CC1101 entry in device tree
 */
-static int cc1101_spi_remove(struct spi_device *spi)
+static void cc1101_spi_remove(struct spi_device *spi)
 {
     cc1101_t* cc1101;
     cc1101 = spi_get_drvdata(spi);
@@ -131,7 +131,6 @@ static int cc1101_spi_remove(struct spi_device *spi)
     // Remove /dev/cc1101.x.x
     cc1101_chrdev_remove_device(cc1101);
     CC1101_INFO(cc1101, "Removed");
-    return 0;
 }
 
 /*

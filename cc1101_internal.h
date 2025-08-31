@@ -9,6 +9,9 @@
 #include <linux/kfifo.h>
 
 #include "cc1101.h"
+#include <linux/mutex.h>
+#include <linux/timer.h>
+#include <linux/workqueue.h>
 
 #define DRIVER_VERSION 4
 
