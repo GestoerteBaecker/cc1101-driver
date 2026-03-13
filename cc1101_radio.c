@@ -457,6 +457,9 @@ irqreturn_t cc1101_rx_interrupt(int irq, void *handle)
             // Add the new packet to the received packet buffer
             kfifo_in(&cc1101->rx_fifo, cc1101->current_packet, cc1101->rx_config.packet_length);
 
+            // Wake any readers waiting for data
+            wake_up_interruptible(&cc1101->read_wq);
+
             CC1101_DEBUG(cc1101, "Packet Received");
 
             // Reset the number of bytes remaining

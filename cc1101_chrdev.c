@@ -3,6 +3,7 @@
 * Copyright (c) 2021
 */
 #include <linux/cdev.h>
+#include <linux/fs.h>
 #include <linux/uaccess.h>
 
 #include "cc1101_internal.h"
@@ -35,6 +36,10 @@
 #define CC1101_GET_RSSI _IOR(CC1101_BASE, 9, unsigned char)
 // Get the configured maximum packet size
 #define CC1101_GET_MAX_PACKET_SIZE _IOR(CC1101_BASE, 10, u32)
+
+// Set/get the read mode (0 = blocking, 1 = non-blocking)
+#define CC1101_SET_NONBLOCK _IOW(CC1101_BASE, 11, int)
+#define CC1101_GET_NONBLOCK _IOR(CC1101_BASE, 12, int)
 
 #define SPI_MAJOR_NUMBER 153
 #define N_SPI_MINOR_NUMBERS 12
@@ -249,6 +254,25 @@ static long chrdev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             ret = copy_to_user((unsigned char*) arg, &max_packet_size, sizeof(max_packet_size));
             break;
 
+        case CC1101_SET_NONBLOCK:
+        {
+            int enabled;
+            if (copy_from_user(&enabled, (int __user *) arg, sizeof(enabled)) != 0) {
+                ret = -EFAULT;
+                break;
+            }
+            cc1101->read_nonblocking = (enabled != 0);
+            ret = 0;
+            break;
+        }
+
+        case CC1101_GET_NONBLOCK:
+        {
+            int enabled = cc1101->read_nonblocking;
+            ret = copy_to_user((int __user *) arg, &enabled, sizeof(enabled));
+            break;
+        }
+
         default:
             CC1101_ERROR(cc1101, "Unknown Command %d, %zu, %zu\n", cmd, sizeof(struct cc1101_rx_config), sizeof(struct cc1101_tx_config));
             ret = -EIO;
@@ -279,10 +303,26 @@ static ssize_t chrdev_read(struct file *file, char __user *buf, size_t len, loff
         return -EBUSY;
     };
 
-    // Check there is at least one packet in the RX FIFO
-    if (kfifo_len(&cc1101->rx_fifo) < cc1101->rx_config.packet_length) {
-        ret = -ENOMSG;
-        goto done;
+    // Wait for data to arrive if the FIFO is empty.
+    while (kfifo_len(&cc1101->rx_fifo) < cc1101->rx_config.packet_length) {
+        if ((file->f_flags & O_NONBLOCK) || cc1101->read_nonblocking) {
+            ret = -EAGAIN;
+            goto done;
+        }
+
+        // Release the lock while waiting to allow the interrupt handler to acquire it
+        mutex_unlock(&cc1101->device_lock);
+
+        ret = wait_event_interruptible(cc1101->read_wq,
+                                      kfifo_len(&cc1101->rx_fifo) >= cc1101->rx_config.packet_length);
+        if (ret) {
+            // Interrupted by a signal
+            return -ERESTARTSYS;
+        }
+
+        if(mutex_lock_interruptible(&cc1101->device_lock) != 0) {
+            return -EBUSY;
+        }
     }
 
     // Copy the packet out to userspace

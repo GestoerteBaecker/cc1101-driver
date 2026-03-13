@@ -7,6 +7,7 @@
 
 #include <linux/kernel.h>
 #include <linux/kfifo.h>
+#include <linux/wait.h>
 
 #include "cc1101.h"
 #include <linux/mutex.h>
@@ -149,6 +150,14 @@ typedef struct {
     DECLARE_KFIFO_PTR(rx_fifo, unsigned char);
     struct timer_list rx_timeout;
     struct work_struct rx_timeout_work;
+
+    /* Configurable read behavior:
+     * - If true, read() returns immediately with -EAGAIN when no packet is available.
+     * - If false, read() blocks until a packet arrives (or signal interrupts it).
+     */
+    bool read_nonblocking;
+
+    wait_queue_head_t read_wq;
 } cc1101_t;
 
 #endif

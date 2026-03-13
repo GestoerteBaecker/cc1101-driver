@@ -7,6 +7,7 @@
 #include <linux/spi/spi.h>
 #include <linux/of_gpio.h>
 #include <linux/input.h>
+#include <linux/timer.h>
 #include <generated/autoconf.h>
 
 #include "cc1101_internal.h"
@@ -65,6 +66,12 @@ static int cc1101_spi_probe(struct spi_device *spi)
     // Initialise the device locks
     mutex_init(&cc1101->device_lock);
     mutex_init(&cc1101->chrdev_lock);
+
+    // Initialise the read waitqueue (used to block reads until a packet is received)
+    init_waitqueue_head(&cc1101->read_wq);
+
+    // Default to blocking reads unless opened with O_NONBLOCK or configured otherwise via ioctl
+    cc1101->read_nonblocking = false;
 
     // Setup the RX timeout timer
     timer_setup(&cc1101->rx_timeout, cc1101_rx_timeout, 0);
