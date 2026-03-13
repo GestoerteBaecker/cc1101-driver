@@ -66,6 +66,9 @@ static int cc1101_spi_probe(struct spi_device *spi)
     mutex_init(&cc1101->device_lock);
     mutex_init(&cc1101->chrdev_lock);
 
+    // Initialize the wait queue for blocking reads
+    init_waitqueue_head(&cc1101->rx_wait); 
+
     // Setup the RX timeout timer
     timer_setup(&cc1101->rx_timeout, cc1101_rx_timeout, 0);
 

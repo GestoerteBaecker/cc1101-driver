@@ -12,6 +12,7 @@
 #include <linux/mutex.h>
 #include <linux/timer.h>
 #include <linux/workqueue.h>
+#include <linux/wait.h>
 
 #define DRIVER_VERSION 4
 
@@ -147,6 +148,7 @@ typedef struct {
     unsigned char *current_packet;
     u32 bytes_remaining;
     DECLARE_KFIFO_PTR(rx_fifo, unsigned char);
+    wait_queue_head_t rx_wait;
     struct timer_list rx_timeout;
     struct work_struct rx_timeout_work;
 } cc1101_t;

@@ -279,10 +279,26 @@ static ssize_t chrdev_read(struct file *file, char __user *buf, size_t len, loff
         return -EBUSY;
     };
 
-    // Check there is at least one packet in the RX FIFO
-    if (kfifo_len(&cc1101->rx_fifo) < cc1101->rx_config.packet_length) {
-        ret = -ENOMSG;
-        goto done;
+    // Loop to wait for data to become available
+    while (kfifo_len(&cc1101->rx_fifo) < cc1101->rx_config.packet_length) {
+        // Unlock while waiting so the interrupt handler can process incoming packets
+        mutex_unlock(&cc1101->device_lock);
+
+        // Check if the user opened the file in non-blocking mode
+        if (file->f_flags & O_NONBLOCK) {
+            return -EAGAIN; // Standard return for non-blocking standard I/O (can keep -ENOMSG if preferred)
+        }
+
+        // Sleep until the interrupt handler wakes us up (or a signal occurs)
+        if (wait_event_interruptible(cc1101->rx_wait, kfifo_len(&cc1101->rx_fifo) >= cc1101->rx_config.packet_length)) {
+            // Woken up by a signal (e.g., Ctrl+C)
+            return -ERESTARTSYS;
+        }
+
+        // Re-acquire the lock before continuing
+        if (mutex_lock_interruptible(&cc1101->device_lock) != 0) {
+            return -EBUSY;
+        }
     }
 
     // Copy the packet out to userspace
