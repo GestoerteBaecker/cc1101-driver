@@ -459,6 +459,9 @@ irqreturn_t cc1101_rx_interrupt(int irq, void *handle)
 
             CC1101_DEBUG(cc1101, "Packet Received");
 
+            // Wake up any processes waiting to read 
+            wake_up_interruptible(&cc1101->rx_wait); 
+
             // Reset the number of bytes remaining
             cc1101->bytes_remaining = 0;
 

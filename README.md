@@ -64,13 +64,13 @@ sudo dkms build -m cc1101 -v 1.4.0
 sudo dkms install -m cc1101 -v 1.4.0
 
 # Enable SPI
-sudo sed -i "s/^#dtparam=spi=on$/dtparam=spi=on/" /boot/config.txt
+sudo sed -i "s/^#dtparam=spi=on$/dtparam=spi=on/" /boot/firmware/config.txt
 
 # Compile Device Tree overlay
 sudo dtc -@ -I dts -O dtb -o /boot/overlays/cc1101.dtbo cc1101.dts
 
 # Enable Device Tree overlay
-echo "dtoverlay=cc1101" | sudo tee -a /boot/config.txt
+echo "dtoverlay=cc1101" | sudo tee -a /boot/firmware/config.txt
 
 # Enable module loading at boot
 echo "cc1101" | sudo tee -a /etc/modules
@@ -109,7 +109,7 @@ To apply the device tree overlay, compile the dts file and move the compiled fil
     # Ubuntu
     mv cc1101.dtbo /boot/firmware/overlays
 
-The following should then be added to /boot/config.txt (Raspberry Pi OS) or /boot/firmware/syscfg.txt (Ubuntu):
+The following should then be added to /boot/firmware/config.txt (Raspberry Pi OS) or /boot/firmware/syscfg.txt (Ubuntu):
 
     dtoverlay=cc1101
 
