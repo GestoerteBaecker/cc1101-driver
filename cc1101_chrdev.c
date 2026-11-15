@@ -82,6 +82,25 @@ static int chrdev_open(struct inode *inode, struct file *file)
     };
 
     file->private_data = cc1101;
+    cc1101->owner_files = current->files;
+    cc1101->closing = false;
+    return 0;
+}
+
+/*
+* Handler for close() on /dev/cc1101.x.x (called for every closed file descriptor, release only for the last one)
+* A thread blocked in read holds a reference to the file, so release is not called while it waits. If the process
+* that opened the device closes its handle, wake the reader so it returns.
+* close-on-exec in a child process (e.g. subprocess) also calls flush, but with the child's files_struct, so it is ignored.
+*/
+static int chrdev_flush(struct file *file, fl_owner_t id)
+{
+    cc1101_t* cc1101 = file->private_data;
+
+    if(cc1101 != NULL && id == cc1101->owner_files){
+        cc1101->closing = true;
+        wake_up_interruptible(&cc1101->rx_wait);
+    }
     return 0;
 }
 
@@ -169,6 +188,10 @@ static long chrdev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
             // Set the device to idle before reconfiguring
             cc1101_idle(cc1101);
+
+            // Discard whatever is left in the device's RX FIFO, so RX starts clean (GDO2 low) and the
+            // next packet raises an interrupt again
+            cc1101_flush_rx_fifo(cc1101);
 
             // Write the configuration to the device
             cc1101_config_apply_rx(cc1101);
@@ -284,15 +307,25 @@ static ssize_t chrdev_read(struct file *file, char __user *buf, size_t len, loff
         // Unlock while waiting so the interrupt handler can process incoming packets
         mutex_unlock(&cc1101->device_lock);
 
+        // The handle is being closed (see chrdev_flush). -EAGAIN like an empty non-blocking read, so cc1101-python's
+        // receive() returns an empty list instead of retrying
+        if (cc1101->closing) {
+            return -EAGAIN;
+        }
+
         // Check if the user opened the file in non-blocking mode
         if (file->f_flags & O_NONBLOCK) {
             return -EAGAIN; // Standard return for non-blocking standard I/O (can keep -ENOMSG if preferred)
         }
 
         // Sleep until the interrupt handler wakes us up (or a signal occurs)
-        if (wait_event_interruptible(cc1101->rx_wait, kfifo_len(&cc1101->rx_fifo) >= cc1101->rx_config.packet_length)) {
+        if (wait_event_interruptible(cc1101->rx_wait, kfifo_len(&cc1101->rx_fifo) >= cc1101->rx_config.packet_length || cc1101->closing)) {
             // Woken up by a signal (e.g., Ctrl+C)
             return -ERESTARTSYS;
+        }
+
+        if (cc1101->closing) {
+            return -EAGAIN;
         }
 
         // Re-acquire the lock before continuing
@@ -440,6 +473,7 @@ static struct file_operations fops =
     .write = chrdev_write,
     .unlocked_ioctl = chrdev_ioctl,
     .open = chrdev_open,
+    .flush = chrdev_flush,
     .release = chrdev_release,
 };
 
