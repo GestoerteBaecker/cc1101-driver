@@ -12,5 +12,7 @@ void cc1101_rx(cc1101_t* cc1101);
 void cc1101_tx(cc1101_t* cc1101, const char* buf, size_t len);
 #endif
 void cc1101_reset(cc1101_t* cc1101);
+void cc1101_flush_rx_fifo(cc1101_t *cc1101);
+void cc1101_rx_watchdog_work(struct work_struct *work);
 
 #endif

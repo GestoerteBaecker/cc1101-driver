@@ -94,6 +94,8 @@ static int cc1101_spi_probe(struct spi_device *spi)
         return -ENODEV;
     }
 
+    cc1101->gpio = gpio;
+
     // Get an IRQ for the GPIO
     cc1101->irq = gpiod_to_irq(gpio);
 
@@ -112,6 +114,10 @@ static int cc1101_spi_probe(struct spi_device *spi)
     // Associate the device struct to the parent SPI device
     spi_set_drvdata(spi, cc1101);
 
+    // Start the RX watchdog (recovers RX if GDO2 stays high without a packet in progress)
+    INIT_DELAYED_WORK(&cc1101->rx_watchdog_work, cc1101_rx_watchdog_work);
+    schedule_delayed_work(&cc1101->rx_watchdog_work, msecs_to_jiffies(1000));
+
     CC1101_INFO(cc1101, "Ready " EXTRA_STATUS " (Partnum: 0x%02x, Version: 0x%02x)", partnum.data, version.data);
 
     return 0;
@@ -125,7 +131,8 @@ static void cc1101_spi_remove(struct spi_device *spi)
     cc1101_t* cc1101;
     cc1101 = spi_get_drvdata(spi);
 
-    // Remove the RX timeout timer
+    // Stop the RX watchdog and remove the RX timeout timer
+    cancel_delayed_work_sync(&cc1101->rx_watchdog_work);
     del_timer(&cc1101->rx_timeout);
 
     // Reset the hardware, placing it in idle mode
@@ -189,4 +196,4 @@ module_exit(cc1101_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("");
 MODULE_DESCRIPTION("TI CC1101 Device Driver");
-MODULE_VERSION("1.4.0");
+MODULE_VERSION("1.4.1");

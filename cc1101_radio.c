@@ -291,6 +291,11 @@ void cc1101_tx(cc1101_t* cc1101, const char* buf, size_t len){
     
     // Flush the TXFIFO
     cc1101_flush_tx_fifo(cc1101);
+
+    // Flush the RXFIFO as well: a packet that started to arrive before the TX left bytes above the FIFO threshold.
+    // Its interrupt was ignored (mode != RX), so GDO2 would stay high after returning to RX, no further rising edge
+    // would occur and RX would be dead until a reset (seen on the Pis 2026-11-14).
+    cc1101_flush_rx_fifo(cc1101);
     
     // Return to RX mode if configured
     if(cc1101->rx_config.packet_length > 0){
@@ -367,9 +372,11 @@ irqreturn_t cc1101_rx_interrupt(int irq, void *handle)
             // Put the device back into receive mode ready to receive the next packet
             change_state(cc1101, MODE_RX);
 
-            // Unlock mutex and reset packet count
-            cc1101->bytes_remaining = 0;
-            mutex_unlock(&cc1101->device_lock);
+            // Unlock mutex (only held while a packet is in progress) and reset packet count
+            if(cc1101->bytes_remaining != 0){
+                cc1101->bytes_remaining = 0;
+                mutex_unlock(&cc1101->device_lock);
+            }
 
             return IRQ_HANDLED;
         }
@@ -516,3 +523,59 @@ void cc1101_rx_timeout(struct timer_list *t){
     schedule_work(&cc1101->rx_timeout_work);
 }
 
+
+// Interval of the RX watchdog. RX counts as stuck if GDO2 is high without a packet in progress in two consecutive checks.
+// Normally the interrupt handler starts a packet (or drains the FIFO) within a few ms after GDO2 rises.
+#define RX_WATCHDOG_MS 500
+
+/*
+* Work function of the RX watchdog, reschedules itself
+*
+* If GDO2 stays high while no packet is in progress, the rising edge that triggers the interrupt was missed and
+* will never come again (the FIFO stays above the threshold or has overflowed). Flush the RX FIFO and restart RX.
+*
+* Arguments:
+*   work: rx_watchdog_work struct of the device
+*/
+void cc1101_rx_watchdog_work(struct work_struct *work){
+    cc1101_t *cc1101 = container_of(to_delayed_work(work), cc1101_t, rx_watchdog_work);
+    unsigned char rx_bytes, marcstate;
+
+    // Cheap check without the lock first, so the interrupt handler is not disturbed in the normal case
+    if(cc1101->mode == MODE_RX && cc1101->bytes_remaining == 0 && gpiod_get_value_cansleep(cc1101->gpio) == 1){
+
+        // Only act if nobody else uses the device (TX, ioctl or a packet in progress hold the lock)
+        if(mutex_trylock(&cc1101->device_lock) == 1){
+
+            // Check again with the lock held
+            if(cc1101->mode == MODE_RX && cc1101->bytes_remaining == 0 && cc1101->rx_config.packet_length > 0 &&
+               gpiod_get_value_cansleep(cc1101->gpio) == 1){
+
+                cc1101->rx_watchdog_hits++;
+                if(cc1101->rx_watchdog_hits >= 2){
+                    rx_bytes = cc1101_spi_read_status_register(cc1101, RXBYTES).data;
+                    marcstate = cc1101_spi_read_status_register(cc1101, MARCSTATE).data;
+                    CC1101_ERROR(cc1101, "RX stuck (GDO2 high without packet, RXBYTES 0x%02x, MARCSTATE 0x%02x), flushing RX FIFO",
+                                 rx_bytes, marcstate);
+
+                    // Same recovery as after an overflow in the interrupt handler
+                    change_state(cc1101, MODE_IDLE);
+                    cc1101_flush_rx_fifo(cc1101);
+                    cc1101_spi_write_config_register(cc1101, MDMCFG2, cc1101_get_mdmcfg2(&cc1101->rx_config.common, &cc1101->rx_config));
+                    change_state(cc1101, MODE_RX);
+
+                    cc1101->rx_watchdog_hits = 0;
+                }
+            }
+            else {
+                cc1101->rx_watchdog_hits = 0;
+            }
+            mutex_unlock(&cc1101->device_lock);
+        }
+    }
+    else {
+        cc1101->rx_watchdog_hits = 0;
+    }
+
+    schedule_delayed_work(&cc1101->rx_watchdog_work, msecs_to_jiffies(RX_WATCHDOG_MS));
+}

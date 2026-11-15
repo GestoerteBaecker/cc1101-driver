@@ -12,6 +12,7 @@
 #include <linux/mutex.h>
 #include <linux/timer.h>
 #include <linux/workqueue.h>
+#include <linux/gpio/consumer.h>
 #include <linux/wait.h>
 
 #define DRIVER_VERSION 4
@@ -151,6 +152,11 @@ typedef struct {
     wait_queue_head_t rx_wait;
     struct timer_list rx_timeout;
     struct work_struct rx_timeout_work;
+    struct gpio_desc *gpio;                  // GDO2, read by the RX watchdog
+    struct delayed_work rx_watchdog_work;    // periodic check for a stuck RX (GDO2 high without a packet)
+    int rx_watchdog_hits;                    // consecutive checks that found RX stuck
+    void *owner_files;                       // files_struct of the process that opened the device (see chrdev_flush)
+    bool closing;                            // set when the owner closes the handle, wakes blocked readers
 } cc1101_t;
 
 #endif
