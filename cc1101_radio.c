@@ -137,6 +137,37 @@ void cc1101_rx(cc1101_t* cc1101)
 }
 
 # ifndef RXONLY
+// MARCSTATE value of the IDLE state (datasheet table 32)
+#define MARCSTATE_IDLE 0x01
+// TXFIFO_UNDERFLOW: transmission has stopped, the caller flushes the TX FIFO
+#define MARCSTATE_TXFIFO_UNDERFLOW 0x16
+// Upper limit for waiting until the last bytes have left the modulator. Normally a few byte times
+// (80 us per byte at 100 kBaud, 13 ms at 0.6 kBaud), only reached if the device does not go to IDLE by itself
+#define TX_END_TIMEOUT_MS 100
+
+/*
+* Wait until the device has actually finished transmitting.
+* TXBYTES reaching 0 only means the last byte has been taken from the TX FIFO, it is still in the modulator.
+* Sending SIDLE at that point cut off the end of every packet (the receiver read ~3 bytes of noise instead).
+* In fixed packet length mode the device goes to IDLE by itself after the last byte (MCSM1 TXOFF_MODE = IDLE).
+*
+* Arguments:
+*   cc1101: device struct
+*/
+static void wait_for_tx_end(cc1101_t* cc1101){
+    unsigned long timeout = jiffies + msecs_to_jiffies(TX_END_TIMEOUT_MS);
+    unsigned char marcstate;
+
+    do {
+        marcstate = cc1101_spi_read_status_register(cc1101, MARCSTATE).data & 0x1F;
+        if(marcstate == MARCSTATE_IDLE || marcstate == MARCSTATE_TXFIFO_UNDERFLOW){
+            return;
+        }
+    } while(time_before(jiffies, timeout));
+
+    CC1101_ERROR(cc1101, "TX did not end by itself (MARCSTATE 0x%02x), forcing IDLE", marcstate);
+}
+
 /*
 * Function to transmit an arbitrary length packet (> 64 bytes)
 * Arguments:
@@ -220,6 +251,8 @@ static void tx_multi(cc1101_t* cc1101, const char* buf, size_t len){
         }
 
     } while(bytes_remaining > 0);
+
+    wait_for_tx_end(cc1101);
 }
 
 /*
@@ -261,6 +294,8 @@ static void tx_single(cc1101_t* cc1101, const char* buf, size_t len)
         }
 
     } while(bytes_remaining > 0) ;
+
+    wait_for_tx_end(cc1101);
 }
 
 /*
